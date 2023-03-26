@@ -17,7 +17,7 @@ n_data = 0
 #bin_size = 0.05
 eps = 1e-10
 
-rand_size = 156
+rand_size = 160 * 2
 #prior_freq = 0.7518749999999998
 
 
@@ -28,6 +28,7 @@ condition_dict = {
 	"HOPs":2, 
 	"QDPs":3
 }
+
 means_dict = {
 	"FALSE": 0, 
 	"TRUE": 1
@@ -94,16 +95,19 @@ with open('prob_superiority_yifan.csv', newline='') as f:
 	headers = next(data) 
 	for row in data:
 		if not (row[0] in lo_ground_truth_dict):
-			#print (row[0])
+			#read ground truth pos row[0] in logit space
 			lo_ground_truth_dict[row[0]] = n_ground_truth
+			# compute probability of winning: first inv_log, then compute p[winning] from pos
 			lo_ground_truth.append(norm.cdf(math.sqrt(2) * norm.ppf(inv_log(row[0]))))
 			#lo_ground_truth.append(inv_log(row[0]))
 			#lo_ground_truth[n_ground_truth] = inv_log(row[0])
 			#decision_truth_map[lo_ground_truth[n_ground_truth]] = norm.cdf(math.sqrt(2) * norm.ppf(lo_ground_truth[n_ground_truth]))
 			n_ground_truth += 1
+		'''
 		if not ((row[1], row[3], row[4]) in trial_groundtruth_dict):
 			#print(row[4], lo_ground_truth_dict[row[0]], row[0])
 			trial_groundtruth_dict[(row[1], row[3], row[4])] = lo_ground_truth_dict[row[0]]
+		'''
 		ground_truth_data.append(lo_ground_truth_dict[row[0]])
 		pred_data.append(row[10])
 		means_data.append(row[1])
@@ -122,7 +126,7 @@ def binning(bin_size):
 	return freq
 
 
-bin_size = 0.05
+bin_size = 0.03
 freq = binning(bin_size)
 prior_freq = np.inner(np.sum(freq[0, 0], axis = 1), lo_ground_truth) / np.sum(freq[0, 0])
 
@@ -145,7 +149,8 @@ def expect_quadratic(report, pos_truth):
 		tmp_ground_truth = [lo_ground_truth[i] for i in pos_truth]
 	tmp_ground_truth = np.array(tmp_ground_truth)
 	# decision score
-	return (1 - np.less_equal(prior_freq, report)) * 0.5 * 3.17 + (np.less_equal(prior_freq, report)) * (tmp_ground_truth * 3.17 - 1 )
+	return decision_score(np.less_equal(prior_freq, report), tmp_ground_truth)
+	#return (1 - np.less_equal(prior_freq, report)) * 0.5 * 3.17 + (np.less_equal(prior_freq, report)) * (tmp_ground_truth * 3.17 - 1 )
 	
 	# optimal score
 	# return (np.greater_equal(np.full(np.size(prior_freq), 0.5), prior_freq)) * (np.greater_equal(prior_freq, report)) * ((0.00 - 0.5) * (truth - prior_freq) / (1.00 - prior_freq) + 0.5) + (np.greater_equal(np.full(np.size(prior_freq), 0.5), prior_freq)) * (1 - np.greater_equal(prior_freq, report)) * ((1.00 - 0.5) * (truth - prior_freq)/ (1.00 - prior_freq) + 0.5) + (1 - np.greater_equal(np.full(np.size(prior_freq), 0.5), prior_freq)) * (np.greater_equal(prior_freq, report)) * ((1.00 - 0.5) * (truth - prior_freq) / (0.00 - prior_freq) + 0.5) + (1 - np.greater_equal(np.full(np.size(prior_freq), 0.5), prior_freq)) * (1 - np.greater_equal(prior_freq, report)) * ((0.00 - 0.5) * (truth - prior_freq) / (0.00 - prior_freq) + 0.5)
@@ -159,7 +164,7 @@ def expect_quadratic(report, pos_truth):
 
 def decision_score(decision, truth):
 	#return prob * expect_quadratic(1.00, truth) + (1.00 - prob) * expect_quadratic(0.00, truth)
-	return decision * (2.17 * truth - 1) + (1 - decision) * 3.17 * 0.5
+	return decision * (3.17 * truth - 1.00) + (1 - decision) * 3.17 * 0.5
 	
 	
 
@@ -191,14 +196,8 @@ def calc_score(freq_tmp, bin_size):
 	for i in range(n_ground_truth):
 		calib_behav_score += np.inner(freq_tmp[i], expect_quadratic(calib_posterior, [i])) / np.sum(freq_tmp)
 	#print(calib_behav_score)
-
 	return behavioral_score, calib_behav_score
 	#percentage_calib.append((calib_behav_score - prior_score) / (posterior_score - prior_score))
-
-def calc_decision_score(freq_tmp):
-	
-
-
 
 
 
@@ -220,11 +219,16 @@ def main():
 	score_calib = []
 
 
+	
+
+
 	decision_pred = np.zeros((4, 2), dtype = float)
+	decision_pred_flip = np.zeros((4, 2), dtype = float)
 	decision_pred_cnt = np.zeros((4, 2, 8), dtype = int)
 	decision_pred_cnt_tmp = np.zeros((4, 2), dtype = int)
 	decision_pred_map = {}
-
+	decision_wrong_cnt = np.zeros((4, 2, 8), dtype = float)
+	bias_ind = []
 	with open('posterior_predictive_draws_decisions_kale2020.csv', newline = '') as f:
 		data = csv.reader(f)
 		headers = next(data)
@@ -233,13 +237,27 @@ def main():
 			if not tmp_ground_truth in decision_pred_map:
 				decision_pred_map[tmp_ground_truth] = decision_pred_cnt_tmp[condition_dict[row[3]], means_dict[row[1]]]
 				decision_pred_cnt_tmp[condition_dict[row[3]], means_dict[row[1]]] += 1
+				bias_ind.append(tmp_ground_truth)
 			decision_pred_cnt[condition_dict[row[3]], means_dict[row[1]], decision_pred_map[tmp_ground_truth]] += 1
+			decision_wrong_cnt[condition_dict[row[3]], means_dict[row[1]], decision_pred_map[tmp_ground_truth]] += (tmp_ground_truth >= 0.81545741) ^ (int(row[10]))
 			decision_pred[condition_dict[row[3]], means_dict[row[1]]] += decision_score(int(row[10]), tmp_ground_truth)
-	print(decision_pred_map)
+			decision_pred_flip[condition_dict[row[3]], means_dict[row[1]]] += decision_score(1 - int(row[10]), tmp_ground_truth)
+	#print(decision_pred_map)
 	#print(decision_pred_cnt)
+	for t in range(4):
+		for m in range(2):
+			print(decision_wrong_cnt[t, m] / decision_pred_cnt[t, m])
+
+	for i in range(len(bias_ind)):
+		for j in range(i + 1, len(bias_ind)):
+			if eq_err(bias_ind[i], bias_ind[j]):
+				bias_ind.remove(bias_ind[j])
 	decision_pred = decision_pred / np.sum(decision_pred_cnt, axis = 2)
+	decision_pred_flip = decision_pred_flip / np.sum(decision_pred_cnt, axis = 2)
 	decision_score_ind = []
 	decision_score_final = []
+	decision_score_final_flip = []
+	
 
 	score_bounds = [prior_score, posterior_score]
 	score_bounds_ind = [0, 0]
@@ -268,6 +286,7 @@ def main():
 			#decision_score_final.append(decision_score(decision_pred[t, m], list(range(0, n_ground_truth))))
 			decision_score_ind.append(t * 4 + m + 1)
 			decision_score_final.append(decision_pred[t, m])
+			decision_score_final_flip.append(decision_pred_flip[t, m])
 			#decision_score_final.append(decision_score_tmp[(means[m], condition[t])] / decision_count_tmp[(means[m], condition[t])])
 			#decision_score_ind.append(t * 4 + m + 1)
 	print(decision_score_final)
@@ -276,7 +295,14 @@ def main():
 	plt.scatter(score_ind, score_calib, s = 1)
 	plt.scatter(score_ind, score_behav, s = 1)
 	plt.scatter(decision_score_ind, decision_score_final, s = 50)
+	#plt.scatter(decision_score_ind, decision_score_final_flip, s=30)
 	plt.show()
 
+
+	for t in range(4):
+		for m in range(2):
+			plt.subplot(8, 1, t * 2 + m  + 1)
+			plt.plot(bias_ind, decision_wrong_cnt[t, m] / decision_pred_cnt[t, m])
+	plt.show()
 
 main()
